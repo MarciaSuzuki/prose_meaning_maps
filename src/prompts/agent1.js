@@ -249,4 +249,8 @@ This section overrides any earlier style guidance.
 - Prefer factual descriptions over evocative language.
 - In discourse and scene levels, state only the essential narrative movement and function.
 - In utterance level, answer the six questions in compressed form without extra elaboration.
+- MUST COMMUNICATE must be topic-style, not translatable sentences.
+  - Use short fragments or key:value slots (e.g., "Names: Elimelech, Naomi, Mahlon, Chilion; Identity: Ephrathites; Origin: Bethlehem in Judah; Location: Moab; Status: stayed there").
+  - Avoid full sentences, finite verbs, or natural English word order.
+  - No pronouns; use explicit nouns or labels.
 `;
