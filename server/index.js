@@ -62,15 +62,14 @@ app.post('/api/agent', async (req, res) => {
       messages: [{ role: 'user', content: userPrompt }],
     }
 
-    if (typeof temperature === 'number') {
-      payload.temperature = temperature
-    }
-
     if (thinking && thinking.enabled) {
       payload.thinking = {
         type: 'enabled',
         budget_tokens: resolvedBudget,
       }
+      payload.temperature = 1
+    } else if (typeof temperature === 'number') {
+      payload.temperature = temperature
     }
 
     const message = await anthropic.messages.create(payload)

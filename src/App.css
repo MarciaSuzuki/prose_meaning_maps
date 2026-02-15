@@ -144,6 +144,11 @@
   font-weight: 600;
 }
 
+.api-hint {
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+}
+
 .control-group {
   display: flex;
   flex-direction: column;

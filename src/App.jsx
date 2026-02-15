@@ -90,6 +90,7 @@ function App() {
   const [apiError, setApiError] = useState('')
   const [runningAgent, setRunningAgent] = useState('')
   const [savedMapsLoading, setSavedMapsLoading] = useState(false)
+  const effectiveTemperature = thinkingEnabled ? 1 : Number(temperature)
 
   useEffect(() => {
     setStartVerse(verseNumbers[0])
@@ -225,7 +226,7 @@ function App() {
           userPrompt,
           model: apiModel,
           maxTokens: Number(maxTokens),
-          temperature: Number(temperature),
+          temperature: effectiveTemperature,
           thinking: {
             enabled: thinkingEnabled,
             budgetTokens: Number(thinkingBudget),
@@ -508,9 +509,11 @@ function App() {
             min="0"
             max="1"
             step="0.1"
-            value={temperature}
+            value={thinkingEnabled ? 1 : temperature}
             onChange={(e) => setTemperature(e.target.value)}
+            disabled={thinkingEnabled}
           />
+          {thinkingEnabled && <span className="api-hint">Fixed at 1 when Extended Thinking is enabled.</span>}
         </div>
         {apiError && <div className="api-error">{apiError}</div>}
       </section>
