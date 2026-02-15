@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import bhsa from './data/ruth_bhsa.json'
 import { AGENT_1_PROMPT } from './prompts/agent1'
 import { AGENT_2_PROMPT } from './prompts/agent2'
@@ -26,6 +28,8 @@ const formatPronoun = (word) => {
   const parts = [word.prs, word.prs_ps, word.prs_gn, word.prs_nu].filter(Boolean)
   return parts.join(' ')
 }
+
+const renderMarkdown = (text) => DOMPurify.sanitize(marked.parse(text || ''))
 
 const formatBhsaForPrompt = (verses) => {
   return verses
@@ -91,6 +95,8 @@ function App() {
   const [runningAgent, setRunningAgent] = useState('')
   const [savedMapsLoading, setSavedMapsLoading] = useState(false)
   const effectiveTemperature = thinkingEnabled ? 1 : Number(temperature)
+  const [showBuilderPreview, setShowBuilderPreview] = useState(true)
+  const [showReviewerPreview, setShowReviewerPreview] = useState(true)
 
   useEffect(() => {
     setStartVerse(verseNumbers[0])
@@ -115,6 +121,8 @@ function App() {
       })
       .map((v) => bhsa.chapters[chapter].verses[v])
   }, [chapter, startVerse, endVerse, verseNumbers])
+
+  const requiredVerseRefs = useMemo(() => selectedVerses.map((verse) => verse.ref), [selectedVerses])
 
   const [draftsByPassage, setDraftsByPassage] = useState(() => {
     const raw = localStorage.getItem('ruth_drafts')
@@ -175,6 +183,14 @@ function App() {
 
   const [builderOutput, setBuilderOutput] = useState('')
   const [builderFeedback, setBuilderFeedback] = useState('')
+  const coverageText = activeDraft?.output || builderOutput
+  const missingUtteranceRefs = useMemo(() => {
+    if (!coverageText) return []
+    return requiredVerseRefs.filter((ref) => {
+      const safe = ref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      return !new RegExp(safe, 'i').test(coverageText)
+    })
+  }, [coverageText, requiredVerseRefs])
 
   const builderUserPrompt = useMemo(() => {
     const bhsaBlock = formatBhsaForPrompt(selectedVerses)
@@ -183,6 +199,7 @@ function App() {
       'Task: Produce or revise the Prose Meaning Map using the BHSA data below.',
       'BHSA Data:',
       bhsaBlock,
+      `Required utterance-level sections: ${requiredVerseRefs.join(', ') || 'None'}. Do not omit any verse.`,
       'Previous Draft:',
       activeDraft?.output || 'None',
       'Human Feedback:',
@@ -574,6 +591,25 @@ function App() {
               onChange={(e) => setBuilderOutput(e.target.value)}
               rows={12}
             />
+            <label className="preview-toggle">
+              <input
+                type="checkbox"
+                checked={showBuilderPreview}
+                onChange={(e) => setShowBuilderPreview(e.target.checked)}
+              />
+              Readable view
+            </label>
+            {showBuilderPreview && builderOutput.trim() && (
+              <div
+                className="markdown-preview"
+                dangerouslySetInnerHTML={{ __html: renderMarkdown(builderOutput) }}
+              />
+            )}
+            {missingUtteranceRefs.length > 0 && (
+              <div className="warning">
+                Missing verse-level sections for: {missingUtteranceRefs.join(', ')}.
+              </div>
+            )}
           </div>
 
           <div className="panel-actions">
@@ -672,6 +708,20 @@ function App() {
               rows={12}
               disabled={!activeDraft}
             />
+            <label className="preview-toggle">
+              <input
+                type="checkbox"
+                checked={showReviewerPreview}
+                onChange={(e) => setShowReviewerPreview(e.target.checked)}
+              />
+              Readable view
+            </label>
+            {showReviewerPreview && reviewerOutput.trim() && (
+              <div
+                className="markdown-preview"
+                dangerouslySetInnerHTML={{ __html: renderMarkdown(reviewerOutput) }}
+              />
+            )}
           </div>
 
           <div className="panel-actions">
