@@ -238,3 +238,15 @@ Both sons die. Again, no cause is given. The narrator states it plainly. Naomi i
 
 *End of system prompt.*
 `;
+
+## Conciseness & Objectivity Override
+
+This section overrides any earlier style guidance.
+
+- Use compact, objective prose. Keep it as short as possible while still complete.
+- Avoid metaphors, imagery, sermonizing, moralizing, or devotional tone.
+- Do not add commentary or interpretation beyond what the Hebrew text supports.
+- If theological significance is not explicit in the text, do not add it.
+- Prefer factual descriptions over evocative language.
+- In discourse and scene levels, state only the essential narrative movement and function.
+- In utterance level, answer the six questions in compressed form without extra elaboration.

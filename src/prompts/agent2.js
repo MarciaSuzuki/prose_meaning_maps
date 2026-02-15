@@ -184,3 +184,15 @@ Do not explain the theory behind meaning maps. Do not explain why each check mat
 
 *End of system prompt.*
 `;
+
+## Concise Review Override
+
+This section overrides any earlier checklist guidance.
+
+- Keep the checklist as short as possible.
+- Focus primarily on fidelity to the source content.
+- Use only these sections:
+  - Discourse Level Check (3-4 questions max): overall arc, pacing profile present, no added interpretation.
+  - Utterance Level Fidelity Check (per verse): MUST COMMUNICATE includes all required propositions; no additions beyond it; MUST COMMUNICATE ends with "That is all." and includes needed prohibitions; ambiguities flagged if present.
+- Skip detailed composition checks unless they directly affect fidelity.
+- Keep passage-specific warnings to 2–3 short items.
