@@ -65,7 +65,7 @@ const formatBhsaForPrompt = (verses) => {
 }
 
 const parseRef = (ref) => {
-  const match = /Ruth\s+(\d+):(\d+)(?:-(\d+))?/.exec(ref)
+  const match = /Ruth\s+(\d+):(\d+)(?:-(\d+))?/.exec(ref || '')
   if (!match) return { chapter: 0, start: 0, end: 0 }
   return {
     chapter: Number(match[1]),
@@ -73,6 +73,46 @@ const parseRef = (ref) => {
     end: Number(match[3] || match[2]),
   }
 }
+
+const DISCOURSE_SYSTEM_PROMPT = `${AGENT_1_PROMPT}
+
+## Task Override — Discourse Level Only
+You must output ONLY the Discourse Level map for the requested passage.
+Do not output Scene Level or Utterance Level sections.
+Use this format exactly:
+
+**[Book Chapter:Verses] — Discourse Level**
+[Discourse paragraph]
+
+**Pacing profile:** [pacing description]
+
+Return only this section.`
+
+const SCENE_SYSTEM_PROMPT = `${AGENT_1_PROMPT}
+
+## Task Override — Scene Level Only
+You must output ONLY the Scene Level map(s) for the requested passage.
+Do not output Discourse Level or Utterance Level sections.
+Use this format exactly:
+
+**[Book Chapter:Verses] — Scene Level**
+[Scene descriptions]
+
+Return only this section.`
+
+const UTTERANCE_SYSTEM_PROMPT = `${AGENT_1_PROMPT}
+
+## Task Override — Utterance Level Only
+You must output ONLY Utterance Level maps, one per verse or clause cluster.
+Do not output Discourse Level or Scene Level sections.
+Use this format for each unit:
+
+**[Book Chapter:Verse(s)] — Utterance Level**
+[Description]
+
+**MUST COMMUNICATE:** [compressed propositions…] That is all. [specific prohibitions]
+
+Return only Utterance Level sections.`
 
 function App() {
   const [chapter, setChapter] = useState(chapterNumbers[0])
@@ -95,7 +135,10 @@ function App() {
   const [runningAgent, setRunningAgent] = useState('')
   const [savedMapsLoading, setSavedMapsLoading] = useState(false)
   const effectiveTemperature = thinkingEnabled ? 1 : Number(temperature)
-  const [showBuilderPreview, setShowBuilderPreview] = useState(true)
+
+  const [showDiscoursePreview, setShowDiscoursePreview] = useState(true)
+  const [showScenePreview, setShowScenePreview] = useState(true)
+  const [showUtterancePreview, setShowUtterancePreview] = useState(true)
   const [showReviewerPreview, setShowReviewerPreview] = useState(true)
 
   useEffect(() => {
@@ -126,28 +169,188 @@ function App() {
 
   const [draftsByPassage, setDraftsByPassage] = useState(() => {
     const raw = localStorage.getItem('ruth_drafts')
-    return raw ? JSON.parse(raw) : {}
-  })
-  const [savedMaps, setSavedMaps] = useState(() => {
-    const raw = localStorage.getItem('ruth_saved_maps')
-    return raw ? JSON.parse(raw) : []
-  })
-  const [reviewerByDraft, setReviewerByDraft] = useState(() => {
-    const raw = localStorage.getItem('ruth_reviewer')
-    return raw ? JSON.parse(raw) : {}
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    const normalizeDraft = (draft) => {
+      if (
+        Object.prototype.hasOwnProperty.call(draft, 'discourseOutput') ||
+        Object.prototype.hasOwnProperty.call(draft, 'sceneOutput') ||
+        Object.prototype.hasOwnProperty.call(draft, 'utteranceOutput')
+      ) {
+        return {
+          id: draft.id || makeId(),
+          discourseOutput: draft.discourseOutput || '',
+          discourseFeedback: draft.discourseFeedback || '',
+          sceneOutput: draft.sceneOutput || '',
+          sceneFeedback: draft.sceneFeedback || '',
+          utteranceOutput: draft.utteranceOutput || '',
+          utteranceFeedback: draft.utteranceFeedback || '',
+          reviewerOutput: draft.reviewerOutput || '',
+          createdAt: draft.createdAt || new Date().toISOString(),
+        }
+      }
+      if (draft.output) {
+        return {
+          id: draft.id || makeId(),
+          discourseOutput: '',
+          discourseFeedback: '',
+          sceneOutput: '',
+          sceneFeedback: '',
+          utteranceOutput: draft.output || '',
+          utteranceFeedback: draft.feedback || '',
+          reviewerOutput: '',
+          createdAt: draft.createdAt || new Date().toISOString(),
+        }
+      }
+      return {
+        id: draft.id || makeId(),
+        discourseOutput: '',
+        discourseFeedback: '',
+        sceneOutput: '',
+        sceneFeedback: '',
+        utteranceOutput: '',
+        utteranceFeedback: '',
+        reviewerOutput: '',
+        createdAt: draft.createdAt || new Date().toISOString(),
+      }
+    }
+    return Object.fromEntries(
+      Object.entries(parsed).map(([key, list]) => [
+        key,
+        Array.isArray(list) ? list.map(normalizeDraft) : [],
+      ])
+    )
   })
 
   useEffect(() => {
     localStorage.setItem('ruth_drafts', JSON.stringify(draftsByPassage))
   }, [draftsByPassage])
 
-  useEffect(() => {
-    localStorage.setItem('ruth_saved_maps', JSON.stringify(savedMaps))
-  }, [savedMaps])
+  const drafts = draftsByPassage[passageRef] ?? []
+  const [activeDraftId, setActiveDraftId] = useState(drafts.at(-1)?.id ?? null)
 
   useEffect(() => {
-    localStorage.setItem('ruth_reviewer', JSON.stringify(reviewerByDraft))
-  }, [reviewerByDraft])
+    if (!drafts.find((d) => d.id === activeDraftId)) {
+      setActiveDraftId(drafts.at(-1)?.id ?? null)
+    }
+  }, [passageRef, drafts, activeDraftId])
+
+  const activeDraft = drafts.find((d) => d.id === activeDraftId) || null
+
+  const [discourseOutput, setDiscourseOutput] = useState('')
+  const [sceneOutput, setSceneOutput] = useState('')
+  const [utteranceOutput, setUtteranceOutput] = useState('')
+  const [reviewerOutput, setReviewerOutput] = useState('')
+
+  const [discourseFeedback, setDiscourseFeedback] = useState('')
+  const [sceneFeedback, setSceneFeedback] = useState('')
+  const [utteranceFeedback, setUtteranceFeedback] = useState('')
+
+  useEffect(() => {
+    if (activeDraft) {
+      setDiscourseOutput(activeDraft.discourseOutput || '')
+      setSceneOutput(activeDraft.sceneOutput || '')
+      setUtteranceOutput(activeDraft.utteranceOutput || '')
+      setReviewerOutput(activeDraft.reviewerOutput || '')
+      setDiscourseFeedback(activeDraft.discourseFeedback || '')
+      setSceneFeedback(activeDraft.sceneFeedback || '')
+      setUtteranceFeedback(activeDraft.utteranceFeedback || '')
+    } else {
+      setDiscourseOutput('')
+      setSceneOutput('')
+      setUtteranceOutput('')
+      setReviewerOutput('')
+      setDiscourseFeedback('')
+      setSceneFeedback('')
+      setUtteranceFeedback('')
+    }
+  }, [activeDraftId, passageRef])
+
+  const combinedOutput = [discourseOutput, sceneOutput, utteranceOutput]
+    .map((section) => section.trim())
+    .filter(Boolean)
+    .join('\n\n')
+
+  const missingUtteranceRefs = useMemo(() => {
+    if (!utteranceOutput) return []
+    return requiredVerseRefs.filter((ref) => {
+      const safe = ref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      return !new RegExp(safe, 'i').test(utteranceOutput)
+    })
+  }, [utteranceOutput, requiredVerseRefs])
+
+  const discourseUserPrompt = useMemo(() => {
+    const bhsaBlock = formatBhsaForPrompt(selectedVerses)
+    return [
+      `Passage: ${passageRef}`,
+      'Task: Produce ONLY the Discourse Level map for this passage.',
+      'Include a pacing profile.',
+      'BHSA Data:',
+      bhsaBlock,
+      'Previous Draft:',
+      discourseOutput.trim() || 'None',
+      'Human Feedback:',
+      discourseFeedback.trim() || 'None',
+      'Return only the discourse-level section in the required format.',
+    ].join('\n\n')
+  }, [selectedVerses, passageRef, discourseOutput, discourseFeedback])
+
+  const sceneUserPrompt = useMemo(() => {
+    const bhsaBlock = formatBhsaForPrompt(selectedVerses)
+    return [
+      `Passage: ${passageRef}`,
+      'Task: Produce ONLY the Scene Level map for this passage.',
+      'Use the discourse-level output below to align pacing and structure.',
+      'Discourse Level Output:',
+      discourseOutput.trim() || 'None',
+      'BHSA Data:',
+      bhsaBlock,
+      'Previous Draft:',
+      sceneOutput.trim() || 'None',
+      'Human Feedback:',
+      sceneFeedback.trim() || 'None',
+      'Return only the scene-level section in the required format.',
+    ].join('\n\n')
+  }, [selectedVerses, passageRef, discourseOutput, sceneOutput, sceneFeedback])
+
+  const utteranceUserPrompt = useMemo(() => {
+    const bhsaBlock = formatBhsaForPrompt(selectedVerses)
+    return [
+      `Passage: ${passageRef}`,
+      'Task: Produce ONLY the Utterance Level map for each verse or clause cluster.',
+      `Required utterance-level sections: ${requiredVerseRefs.join(', ') || 'None'}. Do not omit any verse.`,
+      'Discourse Level Output:',
+      discourseOutput.trim() || 'None',
+      'Scene Level Output:',
+      sceneOutput.trim() || 'None',
+      'BHSA Data:',
+      bhsaBlock,
+      'Previous Draft:',
+      utteranceOutput.trim() || 'None',
+      'Human Feedback:',
+      utteranceFeedback.trim() || 'None',
+      'Return only utterance-level sections in the required format.',
+    ].join('\n\n')
+  }, [
+    selectedVerses,
+    passageRef,
+    requiredVerseRefs,
+    discourseOutput,
+    sceneOutput,
+    utteranceOutput,
+    utteranceFeedback,
+  ])
+
+  const reviewerUserPrompt = useMemo(() => {
+    return [
+      `Passage: ${passageRef}`,
+      'Meaning Map Draft (Discourse + Scene + Utterance):',
+      combinedOutput || 'None',
+      'Task: Produce the reviewer checklist for this passage and map.',
+    ].join('\n\n')
+  }, [passageRef, combinedOutput])
+
+  const [savedMaps, setSavedMaps] = useState([])
 
   const refreshSavedMaps = async () => {
     setApiError('')
@@ -169,55 +372,6 @@ function App() {
   useEffect(() => {
     refreshSavedMaps()
   }, [apiBaseUrl])
-
-  const drafts = draftsByPassage[passageRef] ?? []
-  const [activeDraftId, setActiveDraftId] = useState(drafts.at(-1)?.id ?? null)
-
-  useEffect(() => {
-    if (!drafts.find((d) => d.id === activeDraftId)) {
-      setActiveDraftId(drafts.at(-1)?.id ?? null)
-    }
-  }, [passageRef, drafts, activeDraftId])
-
-  const activeDraft = drafts.find((d) => d.id === activeDraftId) || null
-
-  const [builderOutput, setBuilderOutput] = useState('')
-  const [builderFeedback, setBuilderFeedback] = useState('')
-  const coverageText = activeDraft?.output || builderOutput
-  const missingUtteranceRefs = useMemo(() => {
-    if (!coverageText) return []
-    return requiredVerseRefs.filter((ref) => {
-      const safe = ref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      return !new RegExp(safe, 'i').test(coverageText)
-    })
-  }, [coverageText, requiredVerseRefs])
-
-  const builderUserPrompt = useMemo(() => {
-    const bhsaBlock = formatBhsaForPrompt(selectedVerses)
-    return [
-      `Passage: ${passageRef}`,
-      'Task: Produce or revise the Prose Meaning Map using the BHSA data below.',
-      'BHSA Data:',
-      bhsaBlock,
-      `Required utterance-level sections: ${requiredVerseRefs.join(', ') || 'None'}. Do not omit any verse.`,
-      'Previous Draft:',
-      activeDraft?.output || 'None',
-      'Human Feedback:',
-      builderFeedback.trim() || 'None',
-      'Return only the meaning map in the required format.',
-    ].join('\n\n')
-  }, [selectedVerses, passageRef, activeDraft, builderFeedback])
-
-  const reviewerUserPrompt = useMemo(() => {
-    return [
-      `Passage: ${passageRef}`,
-      'Meaning Map Draft:',
-      activeDraft?.output || 'None',
-      'Task: Produce the reviewer checklist for this passage and map.',
-    ].join('\n\n')
-  }, [passageRef, activeDraft])
-
-  const reviewerOutput = activeDraftId ? reviewerByDraft[activeDraftId] ?? '' : ''
 
   const [copyStatus, setCopyStatus] = useState('')
 
@@ -263,34 +417,17 @@ function App() {
     }
   }
 
-  const handleRunAgent1 = () =>
-    runAgent({
-      label: 'agent1',
-      systemPrompt: AGENT_1_PROMPT,
-      userPrompt: builderUserPrompt,
-      onOutput: setBuilderOutput,
-    })
-
-  const handleRunAgent2 = () => {
-    if (!activeDraftId) return
-    runAgent({
-      label: 'agent2',
-      systemPrompt: AGENT_2_PROMPT,
-      userPrompt: reviewerUserPrompt,
-      onOutput: (text) =>
-        setReviewerByDraft((prev) => ({
-          ...prev,
-          [activeDraftId]: text,
-        })),
-    })
-  }
-
-  const handleSaveDraft = () => {
-    if (!builderOutput.trim()) return
+  const handleSaveDraftSet = () => {
+    if (!discourseOutput.trim() && !sceneOutput.trim() && !utteranceOutput.trim()) return
     const newDraft = {
       id: makeId(),
-      output: builderOutput.trim(),
-      feedback: builderFeedback.trim(),
+      discourseOutput: discourseOutput.trim(),
+      discourseFeedback: discourseFeedback.trim(),
+      sceneOutput: sceneOutput.trim(),
+      sceneFeedback: sceneFeedback.trim(),
+      utteranceOutput: utteranceOutput.trim(),
+      utteranceFeedback: utteranceFeedback.trim(),
+      reviewerOutput: reviewerOutput.trim(),
       createdAt: new Date().toISOString(),
     }
     setDraftsByPassage((prev) => ({
@@ -298,8 +435,6 @@ function App() {
       [passageRef]: [...(prev[passageRef] ?? []), newDraft],
     }))
     setActiveDraftId(newDraft.id)
-    setBuilderOutput('')
-    setBuilderFeedback('')
   }
 
   const handleDeleteDraft = (draftId) => {
@@ -307,20 +442,14 @@ function App() {
       const next = (prev[passageRef] ?? []).filter((d) => d.id !== draftId)
       return { ...prev, [passageRef]: next }
     })
-    setReviewerByDraft((prev) => {
-      const next = { ...prev }
-      delete next[draftId]
-      return next
-    })
   }
 
   const handleApprove = async () => {
-    if (!activeDraft || !reviewerOutput.trim()) return
-    setApiError('')
+    if (!combinedOutput || !reviewerOutput.trim()) return
     const entry = {
       id: makeId(),
       passageRef,
-      builderOutput: activeDraft.output,
+      builderOutput: combinedOutput,
       reviewerOutput: reviewerOutput.trim(),
       createdAt: new Date().toISOString(),
     }
@@ -419,7 +548,7 @@ function App() {
           </div>
           <div className="metric">
             <span className="metric-value">{drafts.length}</span>
-            <span className="metric-label">drafts in range</span>
+            <span className="metric-label">draft sets</span>
           </div>
         </div>
       </header>
@@ -536,73 +665,238 @@ function App() {
       </section>
 
       <main className="grid">
-        <section className="panel">
+        <section className="panel span-4">
           <div className="panel-header">
             <div>
-              <h2>Agent 1 — Prose Meaning Map Builder</h2>
-              <p>Use the system prompt and BHSA data to draft the meaning map.</p>
+              <h2>Agent 1 — Discourse Level</h2>
+              <p>Generate the discourse-level description and pacing profile.</p>
             </div>
             {copyStatus && <span className="copy-status">Copied {copyStatus}</span>}
           </div>
 
           <div className="panel-actions">
-            <button className="ghost" onClick={() => handleCopy('System Prompt', AGENT_1_PROMPT)}>
+            <button className="ghost" onClick={() => handleCopy('System Prompt', DISCOURSE_SYSTEM_PROMPT)}>
               Copy System Prompt
             </button>
-            <button className="ghost" onClick={() => handleCopy('User Prompt', builderUserPrompt)}>
+            <button className="ghost" onClick={() => handleCopy('User Prompt', discourseUserPrompt)}>
               Copy User Prompt
             </button>
             <button
               className="primary"
-              onClick={handleRunAgent1}
-              disabled={runningAgent === 'agent1'}
+              onClick={() =>
+                runAgent({
+                  label: 'discourse',
+                  systemPrompt: DISCOURSE_SYSTEM_PROMPT,
+                  userPrompt: discourseUserPrompt,
+                  onOutput: setDiscourseOutput,
+                })
+              }
+              disabled={runningAgent === 'discourse'}
             >
-              {runningAgent === 'agent1' ? 'Running Agent 1…' : 'Run Agent 1'}
+              {runningAgent === 'discourse' ? 'Running…' : 'Run Agent 1'}
             </button>
           </div>
 
           <details className="prompt-box">
-            <summary>System Prompt (Agent 1)</summary>
-            <pre>{AGENT_1_PROMPT}</pre>
+            <summary>System Prompt (Discourse)</summary>
+            <pre>{DISCOURSE_SYSTEM_PROMPT}</pre>
           </details>
 
           <details className="prompt-box">
             <summary>User Prompt (auto-generated)</summary>
-            <pre>{builderUserPrompt}</pre>
+            <pre>{discourseUserPrompt}</pre>
           </details>
 
           <div className="field">
-            <label htmlFor="builder-feedback">Human Feedback / Revisions</label>
+            <label htmlFor="discourse-feedback">Feedback for Discourse</label>
             <textarea
-              id="builder-feedback"
-              placeholder="Notes for the next draft (issues to fix, clarity notes, required changes)."
-              value={builderFeedback}
-              onChange={(e) => setBuilderFeedback(e.target.value)}
-              rows={4}
+              id="discourse-feedback"
+              placeholder="Notes for revising the discourse-level output."
+              value={discourseFeedback}
+              onChange={(e) => setDiscourseFeedback(e.target.value)}
+              rows={3}
             />
           </div>
 
           <div className="field">
-            <label htmlFor="builder-output">Meaning Map Draft Output</label>
+            <label htmlFor="discourse-output">Discourse Output</label>
             <textarea
-              id="builder-output"
-              placeholder="Paste the agent output here."
-              value={builderOutput}
-              onChange={(e) => setBuilderOutput(e.target.value)}
-              rows={12}
+              id="discourse-output"
+              placeholder="Paste discourse output here."
+              value={discourseOutput}
+              onChange={(e) => setDiscourseOutput(e.target.value)}
+              rows={8}
             />
             <label className="preview-toggle">
               <input
                 type="checkbox"
-                checked={showBuilderPreview}
-                onChange={(e) => setShowBuilderPreview(e.target.checked)}
+                checked={showDiscoursePreview}
+                onChange={(e) => setShowDiscoursePreview(e.target.checked)}
               />
               Readable view
             </label>
-            {showBuilderPreview && builderOutput.trim() && (
+            {showDiscoursePreview && discourseOutput.trim() && (
               <div
                 className="markdown-preview"
-                dangerouslySetInnerHTML={{ __html: renderMarkdown(builderOutput) }}
+                dangerouslySetInnerHTML={{ __html: renderMarkdown(discourseOutput) }}
+              />
+            )}
+          </div>
+        </section>
+
+        <section className="panel span-4">
+          <div className="panel-header">
+            <div>
+              <h2>Agent 2 — Scene Level</h2>
+              <p>Generate scene-level summaries aligned to the discourse output.</p>
+            </div>
+            {copyStatus && <span className="copy-status">Copied {copyStatus}</span>}
+          </div>
+
+          <div className="panel-actions">
+            <button className="ghost" onClick={() => handleCopy('System Prompt', SCENE_SYSTEM_PROMPT)}>
+              Copy System Prompt
+            </button>
+            <button className="ghost" onClick={() => handleCopy('User Prompt', sceneUserPrompt)}>
+              Copy User Prompt
+            </button>
+            <button
+              className="primary"
+              onClick={() =>
+                runAgent({
+                  label: 'scene',
+                  systemPrompt: SCENE_SYSTEM_PROMPT,
+                  userPrompt: sceneUserPrompt,
+                  onOutput: setSceneOutput,
+                })
+              }
+              disabled={runningAgent === 'scene'}
+            >
+              {runningAgent === 'scene' ? 'Running…' : 'Run Agent 2'}
+            </button>
+          </div>
+
+          <details className="prompt-box">
+            <summary>System Prompt (Scene)</summary>
+            <pre>{SCENE_SYSTEM_PROMPT}</pre>
+          </details>
+
+          <details className="prompt-box">
+            <summary>User Prompt (auto-generated)</summary>
+            <pre>{sceneUserPrompt}</pre>
+          </details>
+
+          <div className="field">
+            <label htmlFor="scene-feedback">Feedback for Scene Level</label>
+            <textarea
+              id="scene-feedback"
+              placeholder="Notes for revising the scene-level output."
+              value={sceneFeedback}
+              onChange={(e) => setSceneFeedback(e.target.value)}
+              rows={3}
+            />
+          </div>
+
+          <div className="field">
+            <label htmlFor="scene-output">Scene Output</label>
+            <textarea
+              id="scene-output"
+              placeholder="Paste scene output here."
+              value={sceneOutput}
+              onChange={(e) => setSceneOutput(e.target.value)}
+              rows={8}
+            />
+            <label className="preview-toggle">
+              <input
+                type="checkbox"
+                checked={showScenePreview}
+                onChange={(e) => setShowScenePreview(e.target.checked)}
+              />
+              Readable view
+            </label>
+            {showScenePreview && sceneOutput.trim() && (
+              <div
+                className="markdown-preview"
+                dangerouslySetInnerHTML={{ __html: renderMarkdown(sceneOutput) }}
+              />
+            )}
+          </div>
+        </section>
+
+        <section className="panel span-4">
+          <div className="panel-header">
+            <div>
+              <h2>Agent 3 — Utterance Level</h2>
+              <p>Generate verse-level utterance maps with MUST COMMUNICATE boundaries.</p>
+            </div>
+            {copyStatus && <span className="copy-status">Copied {copyStatus}</span>}
+          </div>
+
+          <div className="panel-actions">
+            <button className="ghost" onClick={() => handleCopy('System Prompt', UTTERANCE_SYSTEM_PROMPT)}>
+              Copy System Prompt
+            </button>
+            <button className="ghost" onClick={() => handleCopy('User Prompt', utteranceUserPrompt)}>
+              Copy User Prompt
+            </button>
+            <button
+              className="primary"
+              onClick={() =>
+                runAgent({
+                  label: 'utterance',
+                  systemPrompt: UTTERANCE_SYSTEM_PROMPT,
+                  userPrompt: utteranceUserPrompt,
+                  onOutput: setUtteranceOutput,
+                })
+              }
+              disabled={runningAgent === 'utterance'}
+            >
+              {runningAgent === 'utterance' ? 'Running…' : 'Run Agent 3'}
+            </button>
+          </div>
+
+          <details className="prompt-box">
+            <summary>System Prompt (Utterance)</summary>
+            <pre>{UTTERANCE_SYSTEM_PROMPT}</pre>
+          </details>
+
+          <details className="prompt-box">
+            <summary>User Prompt (auto-generated)</summary>
+            <pre>{utteranceUserPrompt}</pre>
+          </details>
+
+          <div className="field">
+            <label htmlFor="utterance-feedback">Feedback for Utterance Level</label>
+            <textarea
+              id="utterance-feedback"
+              placeholder="Notes for revising the utterance-level output."
+              value={utteranceFeedback}
+              onChange={(e) => setUtteranceFeedback(e.target.value)}
+              rows={3}
+            />
+          </div>
+
+          <div className="field">
+            <label htmlFor="utterance-output">Utterance Output</label>
+            <textarea
+              id="utterance-output"
+              placeholder="Paste utterance output here."
+              value={utteranceOutput}
+              onChange={(e) => setUtteranceOutput(e.target.value)}
+              rows={10}
+            />
+            <label className="preview-toggle">
+              <input
+                type="checkbox"
+                checked={showUtterancePreview}
+                onChange={(e) => setShowUtterancePreview(e.target.checked)}
+              />
+              Readable view
+            </label>
+            {showUtterancePreview && utteranceOutput.trim() && (
+              <div
+                className="markdown-preview"
+                dangerouslySetInnerHTML={{ __html: renderMarkdown(utteranceOutput) }}
               />
             )}
             {missingUtteranceRefs.length > 0 && (
@@ -613,24 +907,29 @@ function App() {
           </div>
 
           <div className="panel-actions">
-            <button className="primary" onClick={handleSaveDraft}>
-              Save Draft
+            <button className="primary" onClick={handleSaveDraftSet}>
+              Save Draft Set
             </button>
             <button
               className="ghost"
               onClick={() => {
-                setBuilderOutput('')
-                setBuilderFeedback('')
+                setDiscourseOutput('')
+                setSceneOutput('')
+                setUtteranceOutput('')
+                setReviewerOutput('')
+                setDiscourseFeedback('')
+                setSceneFeedback('')
+                setUtteranceFeedback('')
               }}
             >
-              Clear Draft Fields
+              Clear All Draft Fields
             </button>
           </div>
 
           <div className="draft-list">
             <h3>Draft History</h3>
             {drafts.length === 0 ? (
-              <p className="muted">No drafts saved yet for this passage.</p>
+              <p className="muted">No draft sets saved yet for this passage.</p>
             ) : (
               drafts.map((draft, index) => (
                 <div
@@ -640,11 +939,13 @@ function App() {
                   <div>
                     <strong>Draft {index + 1}</strong>
                     <p className="muted">{new Date(draft.createdAt).toLocaleString()}</p>
-                    <p className="draft-preview">{draft.output.slice(0, 140) || '—'}</p>
+                    <p className="draft-preview">
+                      {(draft.utteranceOutput || draft.sceneOutput || draft.discourseOutput || '—').slice(0, 140)}
+                    </p>
                   </div>
                   <div className="draft-actions">
                     <button className="ghost" onClick={() => setActiveDraftId(draft.id)}>
-                      Use for Review
+                      Load Draft
                     </button>
                     <button className="danger" onClick={() => handleDeleteDraft(draft.id)}>
                       Delete
@@ -656,11 +957,11 @@ function App() {
           </div>
         </section>
 
-        <section className="panel">
+        <section className="panel span-6">
           <div className="panel-header">
             <div>
-              <h2>Agent 2 — Meaning Map Reviewer</h2>
-              <p>Generate the review checklist from the selected draft.</p>
+              <h2>Agent 4 — Meaning Map Reviewer</h2>
+              <p>Generate the review checklist from the combined map.</p>
             </div>
             {copyStatus && <span className="copy-status">Copied {copyStatus}</span>}
           </div>
@@ -669,24 +970,27 @@ function App() {
             <button className="ghost" onClick={() => handleCopy('System Prompt', AGENT_2_PROMPT)}>
               Copy System Prompt
             </button>
-            <button
-              className="ghost"
-              onClick={() => handleCopy('User Prompt', reviewerUserPrompt)}
-              disabled={!activeDraft}
-            >
+            <button className="ghost" onClick={() => handleCopy('User Prompt', reviewerUserPrompt)}>
               Copy User Prompt
             </button>
             <button
               className="primary"
-              onClick={handleRunAgent2}
-              disabled={!activeDraft || runningAgent === 'agent2'}
+              onClick={() =>
+                runAgent({
+                  label: 'reviewer',
+                  systemPrompt: AGENT_2_PROMPT,
+                  userPrompt: reviewerUserPrompt,
+                  onOutput: setReviewerOutput,
+                })
+              }
+              disabled={runningAgent === 'reviewer' || !combinedOutput}
             >
-              {runningAgent === 'agent2' ? 'Running Agent 2…' : 'Run Agent 2'}
+              {runningAgent === 'reviewer' ? 'Running…' : 'Run Reviewer'}
             </button>
           </div>
 
           <details className="prompt-box">
-            <summary>System Prompt (Agent 2)</summary>
+            <summary>System Prompt (Reviewer)</summary>
             <pre>{AGENT_2_PROMPT}</pre>
           </details>
 
@@ -699,14 +1003,11 @@ function App() {
             <label htmlFor="reviewer-output">Reviewer Checklist Output</label>
             <textarea
               id="reviewer-output"
-              placeholder={activeDraft ? 'Paste reviewer output here.' : 'Select a draft first.'}
+              placeholder={combinedOutput ? 'Paste reviewer output here.' : 'Generate the map first.'}
               value={reviewerOutput}
-              onChange={(e) =>
-                activeDraftId &&
-                setReviewerByDraft((prev) => ({ ...prev, [activeDraftId]: e.target.value }))
-              }
+              onChange={(e) => setReviewerOutput(e.target.value)}
               rows={12}
-              disabled={!activeDraft}
+              disabled={!combinedOutput}
             />
             <label className="preview-toggle">
               <input
@@ -725,7 +1026,7 @@ function App() {
           </div>
 
           <div className="panel-actions">
-            <button className="primary" onClick={handleApprove} disabled={!activeDraft || !reviewerOutput.trim()}>
+            <button className="primary" onClick={handleApprove} disabled={!reviewerOutput.trim()}>
               Approve & Save to Book
             </button>
           </div>
@@ -764,7 +1065,7 @@ function App() {
           </div>
         </section>
 
-        <section className="panel data-panel">
+        <section className="panel data-panel span-6">
           <div className="panel-header">
             <div>
               <h2>BHSA Data — {passageRef}</h2>
